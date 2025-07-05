@@ -1,0 +1,60 @@
+Hlavicka a popis co to bude dělat 
+
+/*
+  VerSiLib project v0x
+  3.7.2025 kittler@fzu.cz
+  -----------------------------------------------------
+  Pulse Counter for FZU reader with tree modes and I2C LCD Display
+  -----------------------------------------------------
+  -----------------------------------------------------
+  This codes includes three operational modes:
+    - DEF: Default mode with periodic pulse counting
+    - COUNT: Measures pulses over a specified interval
+    - SCAN: Responds to X and Y axis triggers
+  -----------------------------------------------------
+  Serial comunication (Commands are terminated with ';'):  
+  INPUTS:
+    - *IDN?                     : Identify the instrument
+    - *RST                      : Reset to default settings
+    - HELP?                     : Display available commands
+    - :STAT:ALL?                : Display current settings
+    - :CONF:EDGE <input>,<edge> : Set edge detection for inputs (SPDMA, X, Y), (RISING, FALLING, CHANGE)
+    - :CONF:DEF                 : Switch to default mode
+    - :CONF:DEF:TIME <ms>       : Set integration time in ms for DEF mode <250ms>
+    - :CONF:DEF:MODE <type>     : Set display mode in DEF (COUNT or FREQ)
+    - :CONF:COUNT               : Switch to measure pulses over specified time period 
+    - :CONF:COUNT:TIME <ms>     : Set integration time in ms for COUNT mode <250ms>
+    - :CONF:COUNT:REPE <int>    : Set the maximum number of measurement repetitions for COUNT mode <1>
+    - :CONF:SCAN                : Enter scan mode
+  -----------------------------------------------------
+  RESPONSE:
+    Arduino/Nucleo - VerSiLib project v0x date: DD.MM.YYYY	: Device identification is also sent on startup or reset.
+    reset ok                                            : Confirmation of reset completion
+    Help:                                               : Send teh copy of the header
+    mode DEF time #### ms mode COUNT/FREQ;              : Confirmation of Default and its configuration
+    mode COUNT time #### ms repe ##;                    : Confirmation of Counting and its configuration
+      no ## count ####;                                 : Measurement result number and measured value
+    mode SCAN;                                          : Confirmation of Scan and its configuration
+      ready;                                            : Ready for scan and waiting for start of movement Y X
+      L ####;                                           : Confirmation of the start of a new line /move X after Y/ with the number of the line 
+      F ####;                                           : Measured values ​​of pulses in individual intervals   
+      I ####;                                           : Confirmation end of line /move Y after X/ with the number of intervals in this line
+
+  -----------------------------------------------------
+  Hardware Connections:
+    	- SPDMA sensor	: Pin 
+    	- X-axis encoder: Pin 
+    	- Y-axis encoder: Pin
+	- GND		: Pin 
+    I2C LCD: 
+	- SDA 		: Pin
+	- SCL		: Pin
+	- GND		: Pin
+	- DC 3,3V	: pin
+  -----------------------------------------------------
+  Notes : 
+  Default Integration Time is 250 ms
+  Default edge is rising.
+  Defaul DEF:MODE is COUNT
+  The measured data/pulses can be sent individually or in packets for faster communication, idealy asynchronously.	  
+*/

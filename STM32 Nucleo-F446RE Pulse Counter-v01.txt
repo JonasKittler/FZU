@@ -1,0 +1,203 @@
+/* STM32 Nucleo-F446RE Pulse Counter Firmware
+ * Author: OpenAI / ChatGPT
+ * Function: Implements 3 operating modes for pulse counting from Thorlabs SPDMA
+ * - Default Mode: Periodic pulse counting with LCD display
+ * - Accumulation Mode: Controlled by PC, repeats fixed # of measurements
+ * - Scan Mode: High-speed sync pulse-driven counting with real-time PC streaming
+ */
+
+#include "main.h"
+#include "lcd.h"
+#include "flash_store.h"
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+
+// Mode enums
+typedef enum {
+    MODE_DEFAULT,
+    MODE_ACCUMULATION,
+    MODE_SCAN
+} OperationMode;
+
+// Globals
+UART_HandleTypeDef huart2;
+TIM_HandleTypeDef htim2; // Pulse counter
+TIM_HandleTypeDef htim3; // Timing window
+
+volatile uint8_t mode_flag = MODE_DEFAULT;
+volatile uint32_t pulse_count = 0;
+volatile uint8_t time_elapsed = 0;
+
+uint32_t window_time_ms = 100; // default
+uint32_t acc_repeats = 0;
+uint32_t acc_remaining = 0;
+uint32_t scan_lines_expected = 0;
+uint32_t scan_line_count = 0;
+
+char uart_rx_buffer[64];
+uint8_t uart_index = 0;
+
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
+    if (htim->Instance == TIM3) {
+        time_elapsed = 1;
+        HAL_TIM_Base_Stop_IT(&htim3);
+    }
+}
+
+void process_uart_command(char *cmd) {
+    if (strncmp(cmd, "SET TIME ", 9) == 0) {
+        uint32_t t = atoi(&cmd[9]);
+        if (t > 0 && t < 10000) {
+            window_time_ms = t;
+            flash_store_time(t);
+        }
+    } else if (strncmp(cmd, "MODE DEF", 8) == 0) {
+        mode_flag = MODE_DEFAULT;
+    } else if (strncmp(cmd, "MODE ACC ", 9) == 0) {
+        acc_repeats = atoi(&cmd[9]);
+        acc_remaining = acc_repeats;
+        mode_flag = MODE_ACCUMULATION;
+    } else if (strncmp(cmd, "MODE SCAN ", 10) == 0) {
+        scan_lines_expected = atoi(&cmd[10]);
+        scan_line_count = 0;
+        mode_flag = MODE_SCAN;
+    } else if (strncmp(cmd, "STOP", 4) == 0) {
+        mode_flag = MODE_DEFAULT;
+    }
+}
+
+void run_default_mode(void) {
+    lcd_clear();
+    lcd_set_cursor(0,0);
+    lcd_print("Def Count:");
+
+    while (mode_flag == MODE_DEFAULT) {
+        __HAL_TIM_SET_COUNTER(&htim2, 0);
+        pulse_count = 0;
+        time_elapsed = 0;
+
+        __HAL_TIM_SET_AUTORELOAD(&htim3, window_time_ms - 1);
+        HAL_TIM_Base_Start_IT(&htim3);
+
+        while (!time_elapsed) {
+            pulse_count = __HAL_TIM_GET_COUNTER(&htim2);
+            if (HAL_UART_Receive(&huart2, (uint8_t*)&uart_rx_buffer[uart_index], 1, 1) == HAL_OK) {
+                if (uart_rx_buffer[uart_index] == '\n') {
+                    uart_rx_buffer[uart_index] = '\0';
+                    process_uart_command(uart_rx_buffer);
+                    uart_index = 0;
+                } else {
+                    if (uart_index < sizeof(uart_rx_buffer)-1)
+                        uart_index++;
+                }
+            }
+        }
+
+        char buf[16];
+        snprintf(buf, 16, "%8lu", pulse_count);
+        lcd_set_cursor(0,9);
+        lcd_print(buf);
+
+        snprintf(buf, 16, "Time:%lums", window_time_ms);
+        lcd_set_cursor(1,0);
+        lcd_print(buf);
+
+        HAL_Delay(200);
+    }
+}
+
+void run_accumulation_mode(void) {
+    lcd_clear();
+    lcd_set_cursor(0,0);
+    lcd_print("A_C Count:");
+
+    while (acc_remaining > 0 && mode_flag == MODE_ACCUMULATION) {
+        __HAL_TIM_SET_COUNTER(&htim2, 0);
+        pulse_count = 0;
+        time_elapsed = 0;
+
+        __HAL_TIM_SET_AUTORELOAD(&htim3, window_time_ms - 1);
+        HAL_TIM_Base_Start_IT(&htim3);
+
+        while (!time_elapsed);
+
+        pulse_count = __HAL_TIM_GET_COUNTER(&htim2);
+
+        char msg[64];
+        snprintf(msg, sizeof(msg), "COUNT %lu\n", pulse_count);
+        HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+
+        char buf[16];
+        snprintf(buf, 16, "%8lu", pulse_count);
+        lcd_set_cursor(0,10);
+        lcd_print(buf);
+
+        snprintf(buf, 16, "Rem:%lu", acc_remaining);
+        lcd_set_cursor(1,0);
+        lcd_print(buf);
+
+        acc_remaining--;
+        HAL_Delay(200);
+    }
+    mode_flag = MODE_DEFAULT;
+}
+
+void run_scan_mode(void) {
+    lcd_clear();
+    lcd_set_cursor(0,0);
+    lcd_print("SCAN Ready");
+
+    char ready_msg[] = "SCAN READY\n";
+    HAL_UART_Transmit(&huart2, (uint8_t*)ready_msg, strlen(ready_msg), HAL_MAX_DELAY);
+
+    while (scan_line_count < scan_lines_expected && mode_flag == MODE_SCAN) {
+        // Čekání na sync signál začátku řádky (GPIO nebo EXTI simulace)
+        // Po synchronizaci spusť čítač a zachyť hodnoty mezi pulzy (GPIO přerušení, atd.)
+
+        lcd_set_cursor(0,0);
+        lcd_print("LINE: ");
+        char buf[8];
+        snprintf(buf, 8, "%lu", scan_line_count+1);
+        lcd_set_cursor(0,6);
+        lcd_print(buf);
+
+        // měření segmentů během linky zde ... (vyžaduje doplnit podle konkrétních pinů)
+        
+        // Odešli data o průběhu měření a segmentů
+        char done_msg[64];
+        snprintf(done_msg, sizeof(done_msg), "LINE DONE %lu\n", scan_line_count+1);
+        HAL_UART_Transmit(&huart2, (uint8_t*)done_msg, strlen(done_msg), HAL_MAX_DELAY);
+
+        scan_line_count++;
+    }
+    mode_flag = MODE_DEFAULT;
+}
+
+int main(void) {
+    HAL_Init();
+    SystemClock_Config();
+    MX_GPIO_Init();
+    MX_USART2_UART_Init();
+    MX_TIM2_Init();
+    MX_TIM3_Init();
+    lcd_init();
+
+    uint32_t stored = flash_load_time();
+    if (stored != 0xFFFFFFFF) window_time_ms = stored;
+
+    HAL_TIM_Base_Start(&htim2);
+
+    while (1) {
+        switch(mode_flag) {
+            case MODE_DEFAULT:
+                run_default_mode(); break;
+            case MODE_ACCUMULATION:
+                run_accumulation_mode(); break;
+            case MODE_SCAN:
+                run_scan_mode(); break;
+        }
+    }
+}
+
+// POZNÁMKA: Nutno doplnit inicializace (MX_TIMx_Init), LCD knihovnu a obsluhu EXTI přerušení podle specifikace synchronizačních pulzů.
